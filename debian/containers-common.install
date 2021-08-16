@@ -1,0 +1,5 @@
+/etc/containers/policy.json
+/etc/containers/registries.conf
+/usr/share/containers/containers.conf
+/usr/share/containers/seccomp.json
+/usr/share/containers/storage.conf
