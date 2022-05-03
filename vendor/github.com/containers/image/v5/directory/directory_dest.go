@@ -3,11 +3,11 @@ package directory
 import (
 	"context"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"runtime"
 
+	"github.com/containers/image/v5/internal/putblobdigest"
 	"github.com/containers/image/v5/types"
 	"github.com/opencontainers/go-digest"
 	"github.com/pkg/errors"
@@ -61,7 +61,7 @@ func newImageDestination(sys *types.SystemContext, ref dirReference) (types.Imag
 				return nil, errors.Wrapf(err, "checking if path exists %q", d.ref.versionPath())
 			}
 			if versionExists {
-				contents, err := ioutil.ReadFile(d.ref.versionPath())
+				contents, err := os.ReadFile(d.ref.versionPath())
 				if err != nil {
 					return nil, err
 				}
@@ -85,7 +85,7 @@ func newImageDestination(sys *types.SystemContext, ref dirReference) (types.Imag
 		}
 	}
 	// create version file
-	err = ioutil.WriteFile(d.ref.versionPath(), []byte(version), 0644)
+	err = os.WriteFile(d.ref.versionPath(), []byte(version), 0644)
 	if err != nil {
 		return nil, errors.Wrapf(err, "creating version file %q", d.ref.versionPath())
 	}
@@ -141,14 +141,14 @@ func (d *dirImageDestination) HasThreadSafePutBlob() bool {
 }
 
 // PutBlob writes contents of stream and returns data representing the result (with all data filled in).
-// inputInfo.Digest can be optionally provided if known; it is not mandatory for the implementation to verify it.
+// inputInfo.Digest can be optionally provided if known; if provided, and stream is read to the end without error, the digest MUST match the stream contents.
 // inputInfo.Size is the expected length of stream, if known.
 // May update cache.
 // WARNING: The contents of stream are being verified on the fly.  Until stream.Read() returns io.EOF, the contents of the data SHOULD NOT be available
 // to any other readers for download using the supplied digest.
 // If stream.Read() at any time, ESPECIALLY at end of input, returns an error, PutBlob MUST 1) fail, and 2) delete any data stored so far.
 func (d *dirImageDestination) PutBlob(ctx context.Context, stream io.Reader, inputInfo types.BlobInfo, cache types.BlobInfoCache, isConfig bool) (types.BlobInfo, error) {
-	blobFile, err := ioutil.TempFile(d.ref.path, "dir-put-blob")
+	blobFile, err := os.CreateTemp(d.ref.path, "dir-put-blob")
 	if err != nil {
 		return types.BlobInfo{}, err
 	}
@@ -163,17 +163,15 @@ func (d *dirImageDestination) PutBlob(ctx context.Context, stream io.Reader, inp
 		}
 	}()
 
-	digester := digest.Canonical.Digester()
-	tee := io.TeeReader(stream, digester.Hash())
-
+	digester, stream := putblobdigest.DigestIfCanonicalUnknown(stream, inputInfo)
 	// TODO: This can take quite some time, and should ideally be cancellable using ctx.Done().
-	size, err := io.Copy(blobFile, tee)
+	size, err := io.Copy(blobFile, stream)
 	if err != nil {
 		return types.BlobInfo{}, err
 	}
-	computedDigest := digester.Digest()
+	blobDigest := digester.Digest()
 	if inputInfo.Size != -1 && size != inputInfo.Size {
-		return types.BlobInfo{}, errors.Errorf("Size mismatch when copying %s, expected %d, got %d", computedDigest, inputInfo.Size, size)
+		return types.BlobInfo{}, errors.Errorf("Size mismatch when copying %s, expected %d, got %d", blobDigest, inputInfo.Size, size)
 	}
 	if err := blobFile.Sync(); err != nil {
 		return types.BlobInfo{}, err
@@ -189,7 +187,7 @@ func (d *dirImageDestination) PutBlob(ctx context.Context, stream io.Reader, inp
 		}
 	}
 
-	blobPath := d.ref.layerPath(computedDigest)
+	blobPath := d.ref.layerPath(blobDigest)
 	// need to explicitly close the file, since a rename won't otherwise not work on Windows
 	blobFile.Close()
 	explicitClosed = true
@@ -197,7 +195,7 @@ func (d *dirImageDestination) PutBlob(ctx context.Context, stream io.Reader, inp
 		return types.BlobInfo{}, err
 	}
 	succeeded = true
-	return types.BlobInfo{Digest: computedDigest, Size: size}, nil
+	return types.BlobInfo{Digest: blobDigest, Size: size}, nil
 }
 
 // TryReusingBlob checks whether the transport already contains, or can efficiently reuse, a blob, and if so, applies it to the current destination
@@ -233,7 +231,7 @@ func (d *dirImageDestination) TryReusingBlob(ctx context.Context, info types.Blo
 // If the destination is in principle available, refuses this manifest type (e.g. it does not recognize the schema),
 // but may accept a different manifest type, the returned error must be an ManifestTypeRejectedError.
 func (d *dirImageDestination) PutManifest(ctx context.Context, manifest []byte, instanceDigest *digest.Digest) error {
-	return ioutil.WriteFile(d.ref.manifestPath(instanceDigest), manifest, 0644)
+	return os.WriteFile(d.ref.manifestPath(instanceDigest), manifest, 0644)
 }
 
 // PutSignatures writes a set of signatures to the destination.
@@ -241,7 +239,7 @@ func (d *dirImageDestination) PutManifest(ctx context.Context, manifest []byte, 
 // (when the primary manifest is a manifest list); this should always be nil if the primary manifest is not a manifest list.
 func (d *dirImageDestination) PutSignatures(ctx context.Context, signatures [][]byte, instanceDigest *digest.Digest) error {
 	for i, sig := range signatures {
-		if err := ioutil.WriteFile(d.ref.signaturePath(i, instanceDigest), sig, 0644); err != nil {
+		if err := os.WriteFile(d.ref.signaturePath(i, instanceDigest), sig, 0644); err != nil {
 			return err
 		}
 	}
@@ -273,7 +271,7 @@ func pathExists(path string) (bool, error) {
 
 // returns true if directory is empty
 func isDirEmpty(path string) (bool, error) {
-	files, err := ioutil.ReadDir(path)
+	files, err := os.ReadDir(path)
 	if err != nil {
 		return false, err
 	}
@@ -282,7 +280,7 @@ func isDirEmpty(path string) (bool, error) {
 
 // deletes the contents of a directory
 func removeDirContents(path string) error {
-	files, err := ioutil.ReadDir(path)
+	files, err := os.ReadDir(path)
 	if err != nil {
 		return err
 	}
