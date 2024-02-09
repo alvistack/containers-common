@@ -1,0 +1,15 @@
+/etc/containers
+/etc/containers/certs.d
+/etc/containers/networks
+/etc/containers/oci
+/etc/containers/oci/hooks.d
+/etc/containers/registries.conf.d
+/etc/containers/registries.d
+/etc/containers/systemd
+/usr/share/containers
+/usr/share/containers/systemd
+/var/lib/containers
+/var/lib/containers/sigstore
+/var/lib/containers/storage
+/var/lib/containers/storage/overlay-images
+/var/lib/containers/storage/overlay-layers
