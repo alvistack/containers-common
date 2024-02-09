@@ -1,0 +1,4 @@
+containers-common: copyright-without-copyright-notice
+containers-common: executable-not-elf-or-script
+containers-common: initial-upload-closes-no-bugs
+containers-common: zero-byte-file-in-doc-directory
