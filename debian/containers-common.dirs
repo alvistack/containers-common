@@ -1,0 +1,8 @@
+/etc/containers/
+/etc/containers/certs.d/
+/etc/containers/oci/
+/etc/containers/oci/hooks.d/
+/etc/containers/registries.conf.d/
+/etc/containers/registries.d/
+/usr/share/containers/
+/var/lib/containers/sigstore/
